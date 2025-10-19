@@ -1,29 +1,30 @@
 {
   "id": "static-image",
   "name": "Static Image Display",
-  "version": "1.0.1",
   "author": "ChuckBuilds",
   "description": "Display static images on your LED matrix with automatic scaling, aspect ratio preservation, and transparency support. Perfect for logos, artwork, or custom graphics.",
-  "homepage": "https://github.com/ChuckBuilds/ledmatrix-plugins",
-  "entry_point": "manager.py",
-  "class_name": "StaticImagePlugin",
   "category": "display",
-  "tags": ["image", "static", "display", "graphics", "logo"],
-  "icon": "fas fa-image",
-  "compatible_versions": [">=2.0.0"],
-  "ledmatrix_version": "2.0.0",
-  "requires": {
-    "python": ">=3.9",
-    "display_size": {
-      "min_width": 32,
-      "min_height": 32
+  "tags": [
+    "image",
+    "static",
+    "display",
+    "graphics",
+    "logo"
+  ],
+  "display_modes": [
+    "static_image"
+  ],
+  "download_url_template": "https://github.com/ChuckBuilds/ledmatrix-static-image/archive/refs/tags/v{version}.zip",
+  "versions": [
+    {
+      "released": "2025-10-19",
+      "version": "1.0.1",
+      "ledmatrix_min": "2.0.0"
     }
-  },
-  "config_schema": "config_schema.json",
-  "assets": {},
-  "update_interval": 0,
-  "default_duration": 10,
-  "display_modes": ["static_image"],
-  "api_requirements": []
+  ],
+  "last_updated": "2025-10-19",
+  "stars": 0,
+  "downloads": 0,
+  "verified": true,
+  "screenshot": ""
 }
-
