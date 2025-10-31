@@ -10,7 +10,186 @@
     "image_path": {
       "type": "string",
       "default": "assets/static_images/default.png",
-      "description": "Path to the image file to display (relative or absolute)"
+      "description": "Path to the image file to display (relative or absolute). Legacy field - use image_config for multiple images. Will be auto-migrated to image_config."
+    },
+    "image_config": {
+      "type": "object",
+      "description": "Advanced image configuration supporting multiple images and rotation",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["single", "multiple"],
+          "default": "single",
+          "description": "Display mode: single image or multiple images with rotation"
+        },
+        "rotation_mode": {
+          "type": "string",
+          "enum": ["sequential", "random", "time_based", "date_based"],
+          "default": "sequential",
+          "description": "How to rotate through images: sequential (in order), random, time_based (changes at intervals), or date_based (future)"
+        },
+        "images": {
+          "type": "array",
+          "x-widget": "file-upload",
+          "x-upload-config": {
+            "endpoint": "/api/v3/plugins/assets/upload",
+            "plugin_id": "static-image",
+            "max_files": 10,
+            "allowed_types": ["image/png", "image/jpeg", "image/bmp", "image/gif"],
+            "max_size_mb": 5
+          },
+          "description": "List of images to display. Upload images via the file upload widget.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "description": "Unique identifier for this image"
+              },
+              "path": {
+                "type": "string",
+                "description": "File path relative to project root"
+              },
+              "uploaded_at": {
+                "type": "string",
+                "format": "date-time",
+                "description": "Upload timestamp"
+              },
+              "display_order": {
+                "type": "integer",
+                "default": 0,
+                "description": "Order for sequential rotation (lower numbers first)"
+              },
+              "schedule": {
+                "type": "object",
+                "nullable": true,
+                "x-widget": "schedule",
+                "description": "Schedule when this image should be displayed. Leave empty to always show this image.",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean",
+                    "default": false,
+                    "description": "Enable scheduling for this image"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": ["always", "time_range", "per_day"],
+                    "default": "always",
+                    "description": "Schedule mode: 'always' (show anytime), 'time_range' (same time every day), 'per_day' (different times per day)"
+                  },
+                  "start_time": {
+                    "type": "string",
+                    "format": "time",
+                    "default": "08:00",
+                    "description": "Start time (HH:MM format, 24-hour)"
+                  },
+                  "end_time": {
+                    "type": "string",
+                    "format": "time",
+                    "default": "18:00",
+                    "description": "End time (HH:MM format, 24-hour)"
+                  },
+                  "days": {
+                    "type": "object",
+                    "description": "Per-day schedule settings (only used when mode is 'per_day')",
+                    "properties": {
+                      "monday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "tuesday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "wednesday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "thursday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "friday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "saturday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      },
+                      "sunday": {
+                        "type": "object",
+                        "properties": {
+                          "enabled": {"type": "boolean", "default": true},
+                          "start_time": {"type": "string", "format": "time", "default": "08:00"},
+                          "end_time": {"type": "string", "format": "time", "default": "18:00"}
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "required": ["id", "path"]
+          }
+        }
+      }
+    },
+    "rotation_settings": {
+      "type": "object",
+      "description": "Settings for image rotation behavior",
+      "properties": {
+        "sequential_loop": {
+          "type": "boolean",
+          "default": true,
+          "description": "Loop back to first image after last (sequential mode)"
+        },
+        "random_seed": {
+          "type": ["integer", "null"],
+          "default": null,
+          "description": "Random seed for reproducible rotation (null = use current time)"
+        },
+        "time_intervals": {
+          "type": "object",
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false,
+              "description": "Enable time-based rotation"
+            },
+            "interval_seconds": {
+              "type": "integer",
+              "default": 3600,
+              "minimum": 60,
+              "description": "Change image every N seconds"
+            }
+          }
+        }
+      }
     },
     "fit_to_display": {
       "type": "boolean",
@@ -41,6 +220,6 @@
       "description": "How long to display the image in seconds"
     }
   },
-  "required": ["enabled", "image_path"]
+  "required": ["enabled"]
 }
 
