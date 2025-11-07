@@ -17,6 +17,7 @@ API Version: 1.0.0
 import logging
 import os
 import time
+import uuid
 from typing import Dict, Any, Tuple, Optional, List
 from PIL import Image
 from pathlib import Path
@@ -51,17 +52,16 @@ class StaticImagePlugin(BasePlugin):
         self.background_color = tuple(config.get('background_color', [0, 0, 0]))
         
         # Enhanced image configuration
-        self.image_config = config.get('image_config', {})
-        self.rotation_mode = self.image_config.get('rotation_mode', 'sequential')
-        self.rotation_settings = config.get('rotation_settings', {})
+        raw_image_config = config.get('image_config', {}) or {}
         
         # Legacy support - migrate image_path to image_config if needed
         legacy_image_path = config.get('image_path')
-        if legacy_image_path and not self.image_config.get('images'):
+        if legacy_image_path and not isinstance(raw_image_config, dict):
+            raw_image_config = {}
+        if legacy_image_path and not raw_image_config.get('images'):
             self.logger.info(f"Migrating legacy image_path to image_config: {legacy_image_path}")
-            import uuid
             from datetime import datetime
-            self.image_config = {
+            raw_image_config = {
                 'mode': 'single',
                 'rotation_mode': 'sequential',
                 'images': [{
@@ -71,6 +71,10 @@ class StaticImagePlugin(BasePlugin):
                     'display_order': 0
                 }]
             }
+        
+        self.image_config = self._normalize_image_config(raw_image_config)
+        self.rotation_mode = self.image_config.get('rotation_mode', 'sequential')
+        self.rotation_settings = config.get('rotation_settings', {})
         
         self.images_list = self.image_config.get('images', [])
         
@@ -94,6 +98,69 @@ class StaticImagePlugin(BasePlugin):
 
         # Register fonts
         self._register_fonts()
+
+    def _normalize_image_config(self, image_config: Any) -> Dict[str, Any]:
+        """Normalize image configuration structure for backward compatibility."""
+        normalized: Dict[str, Any]
+        if isinstance(image_config, dict):
+            normalized = dict(image_config)
+        elif isinstance(image_config, list):
+            self.logger.warning("Image config provided as list; wrapping in default config")
+            normalized = {'mode': 'multiple', 'rotation_mode': 'sequential', 'images': image_config}
+        elif isinstance(image_config, str):
+            self.logger.warning("Image config provided as string; treating as single image path")
+            normalized = {
+                'mode': 'single',
+                'rotation_mode': 'sequential',
+                'images': [image_config]
+            }
+        elif image_config is None:
+            normalized = {}
+        else:
+            self.logger.warning(
+                f"Unexpected image_config type ({type(image_config).__name__}); defaulting to empty config"
+            )
+            normalized = {}
+
+        images_raw = normalized.get('images')
+        normalized_images: List[Dict[str, Any]] = []
+
+        if images_raw is None:
+            normalized_images = []
+        elif isinstance(images_raw, list):
+            for index, entry in enumerate(images_raw):
+                if isinstance(entry, dict):
+                    normalized_images.append(entry)
+                elif isinstance(entry, str):
+                    self.logger.warning(
+                        "Image config entry provided as string; converting to structured record"
+                    )
+                    normalized_images.append({
+                        'id': str(uuid.uuid4()),
+                        'path': entry,
+                        'display_order': index
+                    })
+                else:
+                    self.logger.warning(
+                        f"Unsupported image entry type ({type(entry).__name__}); skipping"
+                    )
+        elif isinstance(images_raw, dict):
+            self.logger.warning("Image config 'images' provided as object; wrapping in list")
+            normalized_images.append(images_raw)
+        elif isinstance(images_raw, str):
+            self.logger.warning("Image config 'images' provided as string; converting to list")
+            normalized_images.append({
+                'id': str(uuid.uuid4()),
+                'path': images_raw,
+                'display_order': 0
+            })
+        else:
+            self.logger.warning(
+                f"Unsupported images field type ({type(images_raw).__name__}); defaulting to empty list"
+            )
+
+        normalized['images'] = normalized_images
+        return normalized
 
     def _register_fonts(self):
         """Register fonts with the font manager."""
@@ -635,7 +702,8 @@ class StaticImagePlugin(BasePlugin):
         old_images_count = len(self.images_list)
         old_rotation_mode = self.rotation_mode
         
-        self.image_config = self.config.get('image_config', {})
+        raw_image_config = self.config.get('image_config', {}) or {}
+        self.image_config = self._normalize_image_config(raw_image_config)
         self.rotation_mode = self.image_config.get('rotation_mode', 'sequential')
         self.rotation_settings = self.config.get('rotation_settings', {})
         self.images_list = self.image_config.get('images', [])
