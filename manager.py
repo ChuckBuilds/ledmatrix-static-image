@@ -49,7 +49,13 @@ class StaticImagePlugin(BasePlugin):
         # Configuration
         self.fit_to_display = config.get('fit_to_display', True)
         self.preserve_aspect_ratio = config.get('preserve_aspect_ratio', True)
-        self.background_color = tuple(config.get('background_color', [0, 0, 0]))
+        # Handle background_color - can be list or tuple from JSON
+        bg_color = config.get('background_color', [0, 0, 0])
+        if isinstance(bg_color, (list, tuple)):
+            self.background_color = tuple(bg_color)
+        else:
+            self.logger.warning(f"Invalid background_color type: {type(bg_color)}, using default")
+            self.background_color = (0, 0, 0)
         
         # Enhanced image configuration
         raw_image_config = config.get('image_config', {}) or {}
@@ -108,12 +114,32 @@ class StaticImagePlugin(BasePlugin):
             self.logger.warning("Image config provided as list; wrapping in default config")
             normalized = {'mode': 'multiple', 'rotation_mode': 'sequential', 'images': image_config}
         elif isinstance(image_config, str):
-            self.logger.warning("Image config provided as string; treating as single image path")
-            normalized = {
-                'mode': 'single',
-                'rotation_mode': 'sequential',
-                'images': [image_config]
-            }
+            # Try to parse as JSON first (in case it was double-encoded)
+            try:
+                import json as json_module
+                parsed = json_module.loads(image_config)
+                if isinstance(parsed, dict):
+                    self.logger.warning("Image config provided as JSON string; parsing to dict")
+                    normalized = parsed
+                elif isinstance(parsed, list):
+                    self.logger.warning("Image config provided as JSON array string; wrapping in config")
+                    normalized = {'mode': 'multiple', 'rotation_mode': 'sequential', 'images': parsed}
+                else:
+                    # Not a valid JSON structure, treat as image path
+                    self.logger.warning("Image config provided as string; treating as single image path")
+                    normalized = {
+                        'mode': 'single',
+                        'rotation_mode': 'sequential',
+                        'images': [image_config]
+                    }
+            except (json_module.JSONDecodeError, ValueError):
+                # Not valid JSON, treat as image path
+                self.logger.warning("Image config provided as string; treating as single image path")
+                normalized = {
+                    'mode': 'single',
+                    'rotation_mode': 'sequential',
+                    'images': [image_config]
+                }
         elif image_config is None:
             normalized = {}
         else:
@@ -132,14 +158,35 @@ class StaticImagePlugin(BasePlugin):
                 if isinstance(entry, dict):
                     normalized_images.append(entry)
                 elif isinstance(entry, str):
-                    self.logger.warning(
-                        "Image config entry provided as string; converting to structured record"
-                    )
-                    normalized_images.append({
-                        'id': str(uuid.uuid4()),
-                        'path': entry,
-                        'display_order': index
-                    })
+                    # Try to parse as JSON first (in case it was double-encoded)
+                    try:
+                        import json as json_module
+                        parsed = json_module.loads(entry)
+                        if isinstance(parsed, dict):
+                            self.logger.warning("Image entry provided as JSON string; parsing to dict")
+                            normalized_images.append(parsed)
+                        elif isinstance(parsed, list):
+                            # List of image objects encoded as string
+                            self.logger.warning("Image entries provided as JSON array string; unpacking")
+                            for parsed_entry in parsed:
+                                if isinstance(parsed_entry, dict):
+                                    normalized_images.append(parsed_entry)
+                        else:
+                            # Not a structured object, treat as path
+                            self.logger.warning("Image config entry provided as string; converting to structured record")
+                            normalized_images.append({
+                                'id': str(uuid.uuid4()),
+                                'path': entry,
+                                'display_order': index
+                            })
+                    except (json_module.JSONDecodeError, ValueError):
+                        # Not valid JSON, treat as path
+                        self.logger.warning("Image config entry provided as string; converting to structured record")
+                        normalized_images.append({
+                            'id': str(uuid.uuid4()),
+                            'path': entry,
+                            'display_order': index
+                        })
                 else:
                     self.logger.warning(
                         f"Unsupported image entry type ({type(entry).__name__}); skipping"
@@ -148,12 +195,36 @@ class StaticImagePlugin(BasePlugin):
             self.logger.warning("Image config 'images' provided as object; wrapping in list")
             normalized_images.append(images_raw)
         elif isinstance(images_raw, str):
-            self.logger.warning("Image config 'images' provided as string; converting to list")
-            normalized_images.append({
-                'id': str(uuid.uuid4()),
-                'path': images_raw,
-                'display_order': 0
-            })
+            # Try to parse as JSON array first
+            try:
+                import json as json_module
+                parsed = json_module.loads(images_raw)
+                if isinstance(parsed, list):
+                    self.logger.warning("Image config 'images' provided as JSON array string; parsing")
+                    for entry in parsed:
+                        if isinstance(entry, dict):
+                            normalized_images.append(entry)
+                        else:
+                            self.logger.warning(f"Skipping non-dict entry in parsed images array: {type(entry)}")
+                elif isinstance(parsed, dict):
+                    self.logger.warning("Image config 'images' provided as JSON object string; parsing and wrapping")
+                    normalized_images.append(parsed)
+                else:
+                    # Not a valid structure, treat as path
+                    self.logger.warning("Image config 'images' provided as string; converting to list")
+                    normalized_images.append({
+                        'id': str(uuid.uuid4()),
+                        'path': images_raw,
+                        'display_order': 0
+                    })
+            except (json_module.JSONDecodeError, ValueError):
+                # Not valid JSON, treat as path
+                self.logger.warning("Image config 'images' provided as string; converting to list")
+                normalized_images.append({
+                    'id': str(uuid.uuid4()),
+                    'path': images_raw,
+                    'display_order': 0
+                })
         else:
             self.logger.warning(
                 f"Unsupported images field type ({type(images_raw).__name__}); defaulting to empty list"
@@ -683,13 +754,14 @@ class StaticImagePlugin(BasePlugin):
             self.logger.warning("No images configured and no legacy image_path specified")
             # Don't fail - might be uploading images
         
-        # Validate background color
-        if not isinstance(self.background_color, tuple) or len(self.background_color) != 3:
-            self.logger.error("Invalid background_color: must be RGB tuple")
+        # Validate background color (can be list or tuple from config)
+        bg_color = self.config.get('background_color', [0, 0, 0])
+        if not isinstance(bg_color, (list, tuple)) or len(bg_color) != 3:
+            self.logger.error("Invalid background_color: must be RGB list or tuple with 3 values")
             return False
         
-        if not all(0 <= c <= 255 for c in self.background_color):
-            self.logger.error("Invalid background_color: values must be 0-255")
+        if not all(isinstance(c, (int, float)) and 0 <= c <= 255 for c in bg_color):
+            self.logger.error("Invalid background_color: values must be numbers between 0-255")
             return False
         
         return True
