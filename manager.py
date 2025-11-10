@@ -51,8 +51,24 @@ class StaticImagePlugin(BasePlugin):
         self.preserve_aspect_ratio = config.get('preserve_aspect_ratio', True)
         # Handle background_color - can be list or tuple from JSON
         bg_color = config.get('background_color', [0, 0, 0])
-        if isinstance(bg_color, (list, tuple)):
-            self.background_color = tuple(bg_color)
+        if isinstance(bg_color, (list, tuple)) and len(bg_color) == 3:
+            # Convert string values to integers if needed
+            try:
+                bg_color_numeric = []
+                for c in bg_color:
+                    if isinstance(c, str):
+                        c = int(float(c))  # Handle both int and float strings
+                    elif isinstance(c, float):
+                        c = int(c)
+                    elif not isinstance(c, int):
+                        raise ValueError(f"Invalid color value type: {type(c)}")
+                    if not (0 <= c <= 255):
+                        raise ValueError(f"Color value {c} out of range 0-255")
+                    bg_color_numeric.append(c)
+                self.background_color = tuple(bg_color_numeric)
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Invalid background_color values: {e}, using default")
+                self.background_color = (0, 0, 0)
         else:
             self.logger.warning(f"Invalid background_color type: {type(bg_color)}, using default")
             self.background_color = (0, 0, 0)
@@ -367,7 +383,12 @@ class StaticImagePlugin(BasePlugin):
             # Detect if image is animated GIF
             try:
                 num_frames = getattr(img, 'n_frames', 1)
-                is_animated = getattr(img, 'is_animated', False) or num_frames > 1
+                # Ensure num_frames is an integer
+                try:
+                    num_frames = int(num_frames)
+                except (ValueError, TypeError):
+                    num_frames = 1
+                is_animated = getattr(img, 'is_animated', False) or (num_frames > 1)
             except Exception:
                 is_animated = False
                 num_frames = 1
@@ -385,9 +406,25 @@ class StaticImagePlugin(BasePlugin):
                 self.gif_frames = []
                 self.gif_frame_delays = []
                 
-                for frame_index in range(num_frames):
+                # Ensure num_frames is an integer for range()
+                try:
+                    num_frames_int = int(num_frames)
+                except (ValueError, TypeError):
+                    self.logger.error(f"Cannot convert num_frames '{num_frames}' to integer, treating as static image")
+                    self.is_animated = False
+                    num_frames_int = 1
+                
+                for frame_index in range(num_frames_int):
                     try:
-                        img.seek(frame_index)
+                        # Try to seek to frame (only works for GIFs)
+                        try:
+                            img.seek(frame_index)
+                        except (AttributeError, EOFError, ValueError) as seek_error:
+                            # Not a seekable format or end of frames, treat as static
+                            self.logger.warning(f"Image format does not support frame seeking (frame {frame_index}): {seek_error}, treating as static")
+                            self.is_animated = False
+                            break
+                        
                         # Copy frame (seek modifies image in-place)
                         frame = img.copy()
                         
@@ -426,6 +463,11 @@ class StaticImagePlugin(BasePlugin):
                         
                         # Get frame delay (in milliseconds)
                         frame_delay = img.info.get('duration', 100)
+                        # Ensure frame_delay is numeric
+                        try:
+                            frame_delay = float(frame_delay)
+                        except (ValueError, TypeError):
+                            frame_delay = 100  # Default 100ms
                         # Handle 0 or missing delays
                         if frame_delay <= 0:
                             frame_delay = 100  # Default 100ms
@@ -924,8 +966,23 @@ class StaticImagePlugin(BasePlugin):
             self.logger.error("Invalid background_color: must be RGB list or tuple with 3 values")
             return False
         
-        if not all(isinstance(c, (int, float)) and 0 <= c <= 255 for c in bg_color):
-            self.logger.error("Invalid background_color: values must be numbers between 0-255")
+        # Try to convert string values to numbers
+        try:
+            bg_color_numeric = []
+            for c in bg_color:
+                if isinstance(c, str):
+                    # Try to convert string to number
+                    try:
+                        c = float(c)
+                    except ValueError:
+                        self.logger.error(f"Invalid background_color: cannot convert '{c}' to number")
+                        return False
+                if not isinstance(c, (int, float)) or not (0 <= c <= 255):
+                    self.logger.error(f"Invalid background_color: value {c} must be a number between 0-255")
+                    return False
+                bg_color_numeric.append(int(c))
+        except Exception as e:
+            self.logger.error(f"Invalid background_color: {e}")
             return False
         
         return True
