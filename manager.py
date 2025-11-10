@@ -869,17 +869,17 @@ class StaticImagePlugin(BasePlugin):
                 self.logger.debug(f"Displayed GIF frame {self.current_frame_index + 1}/{len(self.gif_frames)}: {self.image_path}")
             else:
                 # Handle static images (existing behavior)
-            # Clear display if requested
-            if force_clear:
-                self.display_manager.clear()
-            
-            # Set the image on the display manager
-            self.display_manager.image = self.current_image.copy()
-            
-            # Update the display
-            self.display_manager.update_display()
-            
-            self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
+                # Clear display if requested
+                if force_clear:
+                    self.display_manager.clear()
+                
+                # Set the image on the display manager
+                self.display_manager.image = self.current_image.copy()
+                
+                # Update the display
+                self.display_manager.update_display()
+                
+                self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
             
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}")
