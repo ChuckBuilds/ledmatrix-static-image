@@ -144,10 +144,23 @@ class StaticImagePlugin(BasePlugin):
         self.current_image_start_time = 0.0
         self.image_rotation_interval = config.get('image_rotation_interval', config.get('display_duration', 15.0))
         
+        # Check if any configured images are GIFs (for enable_scrolling attribute)
+        # Set as regular attribute (not property) to match stock ticker plugin pattern
+        has_gif_images = False
+        if self.images_list:
+            for img_info in self.images_list:
+                img_path = img_info.get('path', '') if isinstance(img_info, dict) else str(img_info)
+                if img_path and img_path.lower().endswith('.gif'):
+                    has_gif_images = True
+                    break
+        
         # Load initial image
         self._load_current_image()
         
-        self.logger.info(f"Static image plugin initialized with {len(self.images_list)} image(s), rotation: {self.rotation_mode}")
+        # Store value to set in on_enable (after plugin registration)
+        self._enable_scrolling_value = has_gif_images or self.is_animated or (self.image_path and self.image_path.lower().endswith('.gif'))
+        
+        self.logger.info("Static image plugin initialized with %d image(s), rotation: %s", len(self.images_list), self.rotation_mode)
 
         # Register fonts
         self._register_fonts()
@@ -503,6 +516,8 @@ class StaticImagePlugin(BasePlugin):
                 
                 self.logger.info(f"Successfully loaded animated GIF: {len(self.gif_frames)} frames, "
                                f"delays: {self.gif_frame_delays[:5]}... (showing first 5)")
+                # Update enable_scrolling since we now have an animated image
+                self.enable_scrolling = True
                 return True
             else:
                 # Handle static image (existing behavior)
@@ -786,14 +801,21 @@ class StaticImagePlugin(BasePlugin):
         should_reload = False
         
         # Check if it's time to rotate to next image (per-image timing)
+        # Don't reset timing on force_clear - that's for display controller mode rotation
         current_time = time.time()
         if self.current_image_start_time == 0.0:
-            # First time displaying, set start time
+            # First time displaying this image, set start time
             self.current_image_start_time = current_time
-        elif current_time - self.current_image_start_time >= self.image_rotation_interval:
-            # Time to rotate to next image
-            should_reload = True
-            self.current_image_start_time = 0.0  # Reset for next image
+            self.logger.debug("Started displaying image at time %.2f, rotation interval: %.1f seconds", 
+                            self.current_image_start_time, self.image_rotation_interval)
+        else:
+            elapsed = current_time - self.current_image_start_time
+            if elapsed >= self.image_rotation_interval:
+                # Time to rotate to next image
+                should_reload = True
+                self.logger.info("Image rotation triggered: elapsed %.1f seconds (interval: %.1f seconds)", 
+                               elapsed, self.image_rotation_interval)
+                # Don't reset current_image_start_time here - let _load_current_image set it for the new image
         
         if self.rotation_mode in ['random']:
             # Random mode - only reload if we don't have an image loaded
@@ -960,27 +982,52 @@ class StaticImagePlugin(BasePlugin):
         """Get display duration from config."""
         return self.config.get('display_duration', 10.0)
     
-    @property
-    def enable_scrolling(self) -> bool:
+    def on_enable(self) -> None:
+        """Called when plugin is enabled - set enable_scrolling here."""
+        super().on_enable()
+        # Set enable_scrolling after plugin registration (like stock ticker)
+        if hasattr(self, '_enable_scrolling_value'):
+            self.enable_scrolling = self._enable_scrolling_value
+            self.logger.info("Set enable_scrolling to %s in on_enable (in __dict__: %s)", 
+                           self.enable_scrolling, 'enable_scrolling' in self.__dict__)
+        else:
+            # Fallback: check again
+            has_gif_images = False
+            if self.images_list:
+                for img_info in self.images_list:
+                    img_path = img_info.get('path', '') if isinstance(img_info, dict) else str(img_info)
+                    if img_path and img_path.lower().endswith('.gif'):
+                        has_gif_images = True
+                        break
+            self.enable_scrolling = has_gif_images or self.is_animated or (self.image_path and self.image_path.lower().endswith('.gif'))
+            self.logger.info("Set enable_scrolling to %s in on_enable (fallback, in __dict__: %s)", 
+                           self.enable_scrolling, 'enable_scrolling' in self.__dict__)
+    
+    def _update_enable_scrolling(self) -> None:
         """
-        Enable high-FPS mode for animated GIFs.
-        
-        Returns:
-            True if current image is animated or if any configured images are GIFs, False otherwise
+        Update enable_scrolling attribute based on current image state.
+        Called when image changes to keep enable_scrolling in sync.
         """
-        # If current image is animated, return True
+        # Check if current image is animated
         if self.is_animated:
-            return True
+            self.enable_scrolling = True
+            return
         
-        # Check if any configured images are GIFs (even if not loaded yet)
-        # This ensures high-FPS mode is enabled before the image is loaded
+        # Check if current image path is a GIF
+        if self.image_path and self.image_path.lower().endswith('.gif'):
+            self.enable_scrolling = True
+            return
+        
+        # Check if any configured images are GIFs
+        has_gif_images = False
         if self.images_list:
             for img_info in self.images_list:
-                img_path = img_info.get('path', '')
-                if img_path.lower().endswith('.gif'):
-                    return True
+                img_path = img_info.get('path', '') if isinstance(img_info, dict) else str(img_info)
+                if img_path and img_path.lower().endswith('.gif'):
+                    has_gif_images = True
+                    break
         
-        return False
+        self.enable_scrolling = has_gif_images
     
     def validate_config(self) -> bool:
         """Validate plugin configuration."""
