@@ -117,6 +117,13 @@ class StaticImagePlugin(BasePlugin):
         self.image_path = None  # Will be set by _get_next_image()
         self.last_update_time = 0
         
+        # Animation state for GIFs
+        self.is_animated = False
+        self.current_frame_index = 0
+        self.last_frame_time = 0.0
+        self.gif_frames: List[Image.Image] = []
+        self.gif_frame_delays: List[int] = []
+        
         # Load initial image
         self._load_current_image()
         
@@ -321,6 +328,7 @@ class StaticImagePlugin(BasePlugin):
     def _load_image(self) -> bool:
         """
         Load and process the image for display.
+        Handles both static images and animated GIFs.
         
         Returns:
             True if successful, False otherwise
@@ -349,58 +357,156 @@ class StaticImagePlugin(BasePlugin):
             # Load the image using resolved path
             img = Image.open(actual_image_path)
             
-            # Convert to RGBA to handle transparency
-            if img.mode != 'RGBA':
-                img = img.convert('RGBA')
+            # Reset animation state
+            self.is_animated = False
+            self.gif_frames = []
+            self.gif_frame_delays = []
+            self.current_frame_index = 0
+            self.last_frame_time = time.time()
+            
+            # Detect if image is animated GIF
+            try:
+                num_frames = getattr(img, 'n_frames', 1)
+                is_animated = getattr(img, 'is_animated', False) or num_frames > 1
+            except Exception:
+                is_animated = False
+                num_frames = 1
             
             # Get display dimensions
             display_width = self.display_manager.matrix.width
             display_height = self.display_manager.matrix.height
             
-            # Calculate target size
-            if self.fit_to_display and self.preserve_aspect_ratio:
-                target_size = self._calculate_fit_size(img.size, (display_width, display_height))
-            elif self.fit_to_display:
-                target_size = (display_width, display_height)
+            if is_animated and num_frames > 1:
+                # Handle animated GIF
+                self.is_animated = True
+                self.logger.info(f"Detected animated GIF with {num_frames} frames")
+                
+                # Preprocess all frames
+                self.gif_frames = []
+                self.gif_frame_delays = []
+                
+                for frame_index in range(num_frames):
+                    try:
+                        img.seek(frame_index)
+                        # Copy frame (seek modifies image in-place)
+                        frame = img.copy()
+                        
+                        # Convert to RGBA to handle transparency
+                        if frame.mode != 'RGBA':
+                            frame = frame.convert('RGBA')
+                        
+                        # Calculate target size
+                        if self.fit_to_display and self.preserve_aspect_ratio:
+                            target_size = self._calculate_fit_size(frame.size, (display_width, display_height))
+                        elif self.fit_to_display:
+                            target_size = (display_width, display_height)
+                        else:
+                            target_size = frame.size
+                        
+                        # Resize frame if needed
+                        if target_size != frame.size:
+                            frame = frame.resize(target_size, Image.Resampling.LANCZOS)
+                        
+                        # Create display-sized canvas with background color
+                        canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+                        
+                        # Calculate position to center the frame
+                        paste_x = (display_width - frame.width) // 2
+                        paste_y = (display_height - frame.height) // 2
+                        
+                        # Handle transparency by compositing
+                        if frame.mode == 'RGBA':
+                            temp_canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+                            temp_canvas.paste(frame, (paste_x, paste_y), frame)
+                            canvas = temp_canvas
+                        else:
+                            canvas.paste(frame, (paste_x, paste_y))
+                        
+                        self.gif_frames.append(canvas)
+                        
+                        # Get frame delay (in milliseconds)
+                        frame_delay = img.info.get('duration', 100)
+                        # Handle 0 or missing delays
+                        if frame_delay <= 0:
+                            frame_delay = 100  # Default 100ms
+                        # Cap very long delays at 1 second
+                        if frame_delay > 1000:
+                            frame_delay = 1000
+                        self.gif_frame_delays.append(int(frame_delay))
+                        
+                    except Exception as e:
+                        self.logger.warning(f"Error processing frame {frame_index}: {e}")
+                        # Skip this frame, but continue with others
+                        continue
+                
+                # Close the GIF file to free memory
+                img.close()
+                
+                if not self.gif_frames:
+                    self.logger.error("No frames were successfully processed from animated GIF")
+                    self.is_animated = False
+                    return False
+                
+                # Set first frame as current image
+                self.current_image = self.gif_frames[0]
+                self.current_frame_index = 0
+                self.last_frame_time = time.time()
+                self.image_loaded = True
+                self.last_update_time = time.time()
+                
+                self.logger.info(f"Successfully loaded animated GIF: {len(self.gif_frames)} frames, "
+                               f"delays: {self.gif_frame_delays[:5]}... (showing first 5)")
+                return True
             else:
-                target_size = img.size
-            
-            # Resize image if needed
-            if target_size != img.size:
-                img = img.resize(target_size, Image.Resampling.LANCZOS)
-            
-            # Create display-sized canvas with background color
-            canvas = Image.new('RGB', (display_width, display_height), self.background_color)
-            
-            # Calculate position to center the image
-            paste_x = (display_width - img.width) // 2
-            paste_y = (display_height - img.height) // 2
-            
-            # Handle transparency by compositing
-            if img.mode == 'RGBA':
-                # Create a temporary canvas with background color
-                temp_canvas = Image.new('RGB', (display_width, display_height), self.background_color)
-                temp_canvas.paste(img, (paste_x, paste_y), img)
-                canvas = temp_canvas
-            else:
-                canvas.paste(img, (paste_x, paste_y))
-            
-            self.current_image = canvas
-            self.image_loaded = True
-            self.last_update_time = time.time()
-            
-            self.logger.info(f"Successfully loaded and processed image: {self.image_path} -> {actual_image_path}")
-            # Reopen for size info (using resolved path)
-            size_img = Image.open(actual_image_path)
-            self.logger.info(f"Original size: {size_img.size}, "
-                           f"Display size: {target_size}, Position: ({paste_x}, {paste_y})")
-            size_img.close()
-            
-            return True
+                # Handle static image (existing behavior)
+                self.is_animated = False
+                
+                # Convert to RGBA to handle transparency
+                if img.mode != 'RGBA':
+                    img = img.convert('RGBA')
+                
+                # Calculate target size
+                if self.fit_to_display and self.preserve_aspect_ratio:
+                    target_size = self._calculate_fit_size(img.size, (display_width, display_height))
+                elif self.fit_to_display:
+                    target_size = (display_width, display_height)
+                else:
+                    target_size = img.size
+                
+                # Resize image if needed
+                if target_size != img.size:
+                    img = img.resize(target_size, Image.Resampling.LANCZOS)
+                
+                # Create display-sized canvas with background color
+                canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+                
+                # Calculate position to center the image
+                paste_x = (display_width - img.width) // 2
+                paste_y = (display_height - img.height) // 2
+                
+                # Handle transparency by compositing
+                if img.mode == 'RGBA':
+                    # Create a temporary canvas with background color
+                    temp_canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+                    temp_canvas.paste(img, (paste_x, paste_y), img)
+                    canvas = temp_canvas
+                else:
+                    canvas.paste(img, (paste_x, paste_y))
+                
+                self.current_image = canvas
+                self.image_loaded = True
+                self.last_update_time = time.time()
+                
+                # Close the image file
+                img.close()
+                
+                self.logger.info(f"Successfully loaded and processed static image: {self.image_path} -> {actual_image_path}")
+                return True
             
         except Exception as e:
             self.logger.error(f"Error loading image {self.image_path}: {e}")
             self.image_loaded = False
+            self.is_animated = False
             return False
     
     def _setup_rotation(self) -> None:
@@ -618,7 +724,7 @@ class StaticImagePlugin(BasePlugin):
     
     def display(self, force_clear: bool = False) -> None:
         """
-        Display the static image on the LED matrix.
+        Display the static image or animated GIF on the LED matrix.
         
         Args:
             force_clear: If True, clear display before rendering
@@ -663,17 +769,45 @@ class StaticImagePlugin(BasePlugin):
             return
         
         try:
-            # Clear display if requested
-            if force_clear:
-                self.display_manager.clear()
-            
-            # Set the image on the display manager
-            self.display_manager.image = self.current_image.copy()
-            
-            # Update the display
-            self.display_manager.update_display()
-            
-            self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
+            # Handle animated GIFs
+            if self.is_animated and self.gif_frames:
+                current_time = time.time()
+                elapsed_ms = (current_time - self.last_frame_time) * 1000
+                
+                # Check if it's time to advance to next frame
+                if self.current_frame_index < len(self.gif_frame_delays):
+                    frame_delay = self.gif_frame_delays[self.current_frame_index]
+                    
+                    if elapsed_ms >= frame_delay:
+                        # Advance to next frame
+                        self.current_frame_index = (self.current_frame_index + 1) % len(self.gif_frames)
+                        self.current_image = self.gif_frames[self.current_frame_index]
+                        self.last_frame_time = current_time
+                
+                # Clear display if requested (only on first frame)
+                if force_clear and self.current_frame_index == 0:
+                    self.display_manager.clear()
+                
+                # Set the current frame on the display manager
+                self.display_manager.image = self.current_image.copy()
+                
+                # Update the display
+                self.display_manager.update_display()
+                
+                self.logger.debug(f"Displayed GIF frame {self.current_frame_index + 1}/{len(self.gif_frames)}: {self.image_path}")
+            else:
+                # Handle static images (existing behavior)
+                # Clear display if requested
+                if force_clear:
+                    self.display_manager.clear()
+                
+                # Set the image on the display manager
+                self.display_manager.image = self.current_image.copy()
+                
+                # Update the display
+                self.display_manager.update_display()
+                
+                self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
             
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}")
@@ -754,6 +888,16 @@ class StaticImagePlugin(BasePlugin):
         """Get display duration from config."""
         return self.config.get('display_duration', 10.0)
     
+    @property
+    def enable_scrolling(self) -> bool:
+        """
+        Enable high-FPS mode for animated GIFs.
+        
+        Returns:
+            True if current image is animated, False otherwise
+        """
+        return self.is_animated
+    
     def validate_config(self) -> bool:
         """Validate plugin configuration."""
         # Call parent validation first
@@ -819,11 +963,16 @@ class StaticImagePlugin(BasePlugin):
             'preserve_aspect_ratio': self.preserve_aspect_ratio,
             'background_color': self.background_color,
             'rotation_mode': self.rotation_mode,
-            'images_count': len(self.images_list)
+            'images_count': len(self.images_list),
+            'is_animated': self.is_animated
         })
         
         if self.current_image:
             info['display_size'] = self.current_image.size
+        
+        if self.is_animated:
+            info['gif_frames_count'] = len(self.gif_frames)
+            info['current_frame'] = self.current_frame_index + 1
         
         return info
     
@@ -831,5 +980,10 @@ class StaticImagePlugin(BasePlugin):
         """Cleanup resources."""
         self.current_image = None
         self.image_loaded = False
+        # Cleanup GIF frames
+        self.is_animated = False
+        self.gif_frames = []
+        self.gif_frame_delays = []
+        self.current_frame_index = 0
         self.logger.info("Static image plugin cleaned up")
 
