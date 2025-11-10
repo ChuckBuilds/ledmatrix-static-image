@@ -140,6 +140,10 @@ class StaticImagePlugin(BasePlugin):
         self.gif_frames: List[Image.Image] = []
         self.gif_frame_delays: List[int] = []
         
+        # Per-image rotation timing
+        self.current_image_start_time = 0.0
+        self.image_rotation_interval = config.get('image_rotation_interval', config.get('display_duration', 15.0))
+        
         # Load initial image
         self._load_current_image()
         
@@ -493,6 +497,7 @@ class StaticImagePlugin(BasePlugin):
                 self.current_image = self.gif_frames[0]
                 self.current_frame_index = 0
                 self.last_frame_time = time.time()
+                self.current_image_start_time = time.time()  # Track when this image started displaying
                 self.image_loaded = True
                 self.last_update_time = time.time()
                 
@@ -536,13 +541,14 @@ class StaticImagePlugin(BasePlugin):
                 canvas.paste(img, (paste_x, paste_y))
             
             self.current_image = canvas
+            self.current_image_start_time = time.time()  # Track when this image started displaying
             self.image_loaded = True
             self.last_update_time = time.time()
             
-                # Close the image file
-                img.close()
-                
-                self.logger.info(f"Successfully loaded and processed static image: {self.image_path} -> {actual_image_path}")
+            # Close the image file
+            img.close()
+            
+            self.logger.info(f"Successfully loaded and processed static image: {self.image_path} -> {actual_image_path}")
             return True
             
         except Exception as e:
@@ -779,28 +785,37 @@ class StaticImagePlugin(BasePlugin):
         # the display duration expires (handled by display controller rotation)
         should_reload = False
         
+        # Check if it's time to rotate to next image (per-image timing)
+        current_time = time.time()
+        if self.current_image_start_time == 0.0:
+            # First time displaying, set start time
+            self.current_image_start_time = current_time
+        elif current_time - self.current_image_start_time >= self.image_rotation_interval:
+            # Time to rotate to next image
+            should_reload = True
+            self.current_image_start_time = 0.0  # Reset for next image
+        
         if self.rotation_mode in ['random']:
             # Random mode - only reload if we don't have an image loaded
             # or if we're switching from animated to static (or vice versa)
             # Don't reload on every call for animated GIFs as it resets animation
             if not self.image_loaded:
                 should_reload = True
-            elif self.is_animated:
-                # For animated GIFs, don't reload - let animation play
+            elif self.is_animated and not should_reload:
+                # For animated GIFs, don't reload unless it's time to rotate
                 should_reload = False
-            else:
-                # For static images in random mode, we could reload, but
-                # it's better to let the display controller handle rotation
-                # after display_duration expires
-                should_reload = False
+            # else: should_reload is already set by per-image timing check above
         elif self.rotation_mode == 'time_based':
             # Check if we should rotate based on time intervals
             time_intervals = self.rotation_settings.get('time_intervals', {})
             if time_intervals.get('enabled', False):
-                should_reload = True
+                # Use time_intervals if enabled, otherwise use per-image timing
+                if not should_reload:  # Only override if not already set by per-image timing
+                    should_reload = True
         elif self.rotation_mode == 'sequential':
-            # For sequential, only reload if current image is no longer scheduled
-            if self.image_path and self.images_list:
+            # For sequential, check per-image timing (already set above)
+            # Also check if current image is no longer scheduled
+            if self.image_path and self.images_list and not should_reload:
                 current_image_info = next((img for img in self.images_list if img.get('path') == self.image_path), None)
                 if current_image_info:
                     if not self._is_image_scheduled(current_image_info):

@@ -217,7 +217,13 @@
       "type": "number",
       "default": 10,
       "minimum": 1,
-      "description": "How long to display the image in seconds"
+      "description": "How long to display the plugin mode in seconds (used by display controller for mode rotation)"
+    },
+    "image_rotation_interval": {
+      "type": "number",
+      "default": 15,
+      "minimum": 1,
+      "description": "How long to display each image before rotating to the next one (in seconds). Only applies when multiple images are configured."
     }
   },
   "required": ["enabled"]
