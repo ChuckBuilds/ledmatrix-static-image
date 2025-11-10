@@ -82,7 +82,27 @@ class StaticImagePlugin(BasePlugin):
         self.rotation_mode = self.image_config.get('rotation_mode', 'sequential')
         self.rotation_settings = config.get('rotation_settings', {})
         
-        self.images_list = self.image_config.get('images', [])
+        # Get images list and ensure it's always a list (defensive check)
+        images_raw = self.image_config.get('images', [])
+        if isinstance(images_raw, str):
+            # If still a string after normalization, try to parse it
+            try:
+                import json as json_module
+                parsed = json_module.loads(images_raw)
+                if isinstance(parsed, list):
+                    self.logger.warning("Images was still a JSON string after normalization; parsing manually")
+                    self.images_list = parsed
+                else:
+                    self.logger.error(f"Parsed images string but got non-list: {type(parsed)}")
+                    self.images_list = []
+            except (json_module.JSONDecodeError, ValueError) as e:
+                self.logger.error(f"Failed to parse images string: {e}")
+                self.images_list = []
+        elif isinstance(images_raw, list):
+            self.images_list = images_raw
+        else:
+            self.logger.warning(f"Images is unexpected type {type(images_raw)}, defaulting to empty list")
+            self.images_list = []
         
         # Rotation state
         self.current_image_index = 0
