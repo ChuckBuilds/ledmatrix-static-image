@@ -506,44 +506,44 @@ class StaticImagePlugin(BasePlugin):
                 # Convert to RGBA to handle transparency
                 if img.mode != 'RGBA':
                     img = img.convert('RGBA')
-                
-                # Calculate target size
-                if self.fit_to_display and self.preserve_aspect_ratio:
-                    target_size = self._calculate_fit_size(img.size, (display_width, display_height))
-                elif self.fit_to_display:
-                    target_size = (display_width, display_height)
-                else:
-                    target_size = img.size
-                
-                # Resize image if needed
-                if target_size != img.size:
-                    img = img.resize(target_size, Image.Resampling.LANCZOS)
-                
-                # Create display-sized canvas with background color
-                canvas = Image.new('RGB', (display_width, display_height), self.background_color)
-                
-                # Calculate position to center the image
-                paste_x = (display_width - img.width) // 2
-                paste_y = (display_height - img.height) // 2
-                
-                # Handle transparency by compositing
-                if img.mode == 'RGBA':
-                    # Create a temporary canvas with background color
-                    temp_canvas = Image.new('RGB', (display_width, display_height), self.background_color)
-                    temp_canvas.paste(img, (paste_x, paste_y), img)
-                    canvas = temp_canvas
-                else:
-                    canvas.paste(img, (paste_x, paste_y))
-                
-                self.current_image = canvas
-                self.image_loaded = True
-                self.last_update_time = time.time()
-                
+            
+            # Calculate target size
+            if self.fit_to_display and self.preserve_aspect_ratio:
+                target_size = self._calculate_fit_size(img.size, (display_width, display_height))
+            elif self.fit_to_display:
+                target_size = (display_width, display_height)
+            else:
+                target_size = img.size
+            
+            # Resize image if needed
+            if target_size != img.size:
+                img = img.resize(target_size, Image.Resampling.LANCZOS)
+            
+            # Create display-sized canvas with background color
+            canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+            
+            # Calculate position to center the image
+            paste_x = (display_width - img.width) // 2
+            paste_y = (display_height - img.height) // 2
+            
+            # Handle transparency by compositing
+            if img.mode == 'RGBA':
+                # Create a temporary canvas with background color
+                temp_canvas = Image.new('RGB', (display_width, display_height), self.background_color)
+                temp_canvas.paste(img, (paste_x, paste_y), img)
+                canvas = temp_canvas
+            else:
+                canvas.paste(img, (paste_x, paste_y))
+            
+            self.current_image = canvas
+            self.image_loaded = True
+            self.last_update_time = time.time()
+            
                 # Close the image file
                 img.close()
                 
                 self.logger.info(f"Successfully loaded and processed static image: {self.image_path} -> {actual_image_path}")
-                return True
+            return True
             
         except Exception as e:
             self.logger.error(f"Error loading image {self.image_path}: {e}")
@@ -774,11 +774,25 @@ class StaticImagePlugin(BasePlugin):
         # Check if we need to reload image based on schedule changes
         # Schedules are checked in _get_next_image, but we need to reload
         # when schedules might have changed (time-based or random modes)
+        # NOTE: For animated GIFs, we don't reload on every call in random mode
+        # because it would reset the animation. Instead, we only reload when
+        # the display duration expires (handled by display controller rotation)
         should_reload = False
         
         if self.rotation_mode in ['random']:
-            # Random mode - check schedule on each call
-            should_reload = True
+            # Random mode - only reload if we don't have an image loaded
+            # or if we're switching from animated to static (or vice versa)
+            # Don't reload on every call for animated GIFs as it resets animation
+            if not self.image_loaded:
+                should_reload = True
+            elif self.is_animated:
+                # For animated GIFs, don't reload - let animation play
+                should_reload = False
+            else:
+                # For static images in random mode, we could reload, but
+                # it's better to let the display controller handle rotation
+                # after display_duration expires
+                should_reload = False
         elif self.rotation_mode == 'time_based':
             # Check if we should rotate based on time intervals
             time_intervals = self.rotation_settings.get('time_intervals', {})
@@ -825,6 +839,7 @@ class StaticImagePlugin(BasePlugin):
                         self.current_frame_index = (self.current_frame_index + 1) % len(self.gif_frames)
                         self.current_image = self.gif_frames[self.current_frame_index]
                         self.last_frame_time = current_time
+                        self.logger.debug(f"Advanced to GIF frame {self.current_frame_index + 1}/{len(self.gif_frames)} (delay: {frame_delay}ms, elapsed: {elapsed_ms:.1f}ms)")
                 
                 # Clear display if requested (only on first frame)
                 if force_clear and self.current_frame_index == 0:
@@ -839,17 +854,17 @@ class StaticImagePlugin(BasePlugin):
                 self.logger.debug(f"Displayed GIF frame {self.current_frame_index + 1}/{len(self.gif_frames)}: {self.image_path}")
             else:
                 # Handle static images (existing behavior)
-                # Clear display if requested
-                if force_clear:
-                    self.display_manager.clear()
-                
-                # Set the image on the display manager
-                self.display_manager.image = self.current_image.copy()
-                
-                # Update the display
-                self.display_manager.update_display()
-                
-                self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
+            # Clear display if requested
+            if force_clear:
+                self.display_manager.clear()
+            
+            # Set the image on the display manager
+            self.display_manager.image = self.current_image.copy()
+            
+            # Update the display
+            self.display_manager.update_display()
+            
+            self.logger.debug(f"Displayed image: {self.image_path} (mode: {self.rotation_mode})")
             
         except Exception as e:
             self.logger.error(f"Error displaying image: {e}")
