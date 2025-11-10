@@ -966,9 +966,21 @@ class StaticImagePlugin(BasePlugin):
         Enable high-FPS mode for animated GIFs.
         
         Returns:
-            True if current image is animated, False otherwise
+            True if current image is animated or if any configured images are GIFs, False otherwise
         """
-        return self.is_animated
+        # If current image is animated, return True
+        if self.is_animated:
+            return True
+        
+        # Check if any configured images are GIFs (even if not loaded yet)
+        # This ensures high-FPS mode is enabled before the image is loaded
+        if self.images_list:
+            for img_info in self.images_list:
+                img_path = img_info.get('path', '')
+                if img_path.lower().endswith('.gif'):
+                    return True
+        
+        return False
     
     def validate_config(self) -> bool:
         """Validate plugin configuration."""
