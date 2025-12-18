@@ -9,11 +9,6 @@
       "default": false,
       "description": "Enable or disable the static image plugin"
     },
-    "image_path": {
-      "type": "string",
-      "default": "assets/static_images/default.png",
-      "description": "Path to the image file to display (relative or absolute). Legacy field - use image_config for multiple images. Will be auto-migrated to image_config."
-    },
     "image_config": {
       "type": "object",
       "description": "Advanced image configuration supporting multiple images and rotation",
