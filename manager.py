@@ -76,11 +76,16 @@ class StaticImagePlugin(BasePlugin):
         # Enhanced image configuration
         raw_image_config = config.get('image_config', {}) or {}
         
+        # Support both top-level 'images' and nested 'image_config.images' for backward compatibility
+        # Check top-level images first (new flattened schema), then fall back to nested
+        top_level_images = config.get('images')
+        nested_images = raw_image_config.get('images') if isinstance(raw_image_config, dict) else None
+        
         # Legacy support - migrate image_path to image_config if needed
         legacy_image_path = config.get('image_path')
         if legacy_image_path and not isinstance(raw_image_config, dict):
             raw_image_config = {}
-        if legacy_image_path and not raw_image_config.get('images'):
+        if legacy_image_path and not (top_level_images or nested_images):
             self.logger.info(f"Migrating legacy image_path to image_config: {legacy_image_path}")
             from datetime import datetime
             raw_image_config = {
@@ -93,6 +98,19 @@ class StaticImagePlugin(BasePlugin):
                     'display_order': 0
                 }]
             }
+            nested_images = raw_image_config.get('images')
+        
+        # Use top-level images if available, otherwise use nested images
+        if top_level_images:
+            # Merge top-level images into image_config for processing
+            if not isinstance(raw_image_config, dict):
+                raw_image_config = {}
+            raw_image_config['images'] = top_level_images
+        elif nested_images:
+            # Use nested images (backward compatibility)
+            if not isinstance(raw_image_config, dict):
+                raw_image_config = {}
+            raw_image_config['images'] = nested_images
         
         self.image_config = self._normalize_image_config(raw_image_config)
         self.rotation_mode = self.image_config.get('rotation_mode', 'sequential')
